@@ -1,0 +1,117 @@
+.container {
+  min-height: 100vh;
+  background-color: #f8fafc;
+}
+
+.main {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.header {
+  margin-bottom: 2rem;
+}
+
+.title {
+  font-size: 2rem;
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.announcementsBox {
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  padding: 1.5rem;
+}
+
+.announcementsTitle {
+  font-size: 1.5rem;
+  color: #b45309;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #fef3c7;
+}
+
+.announcementCard {
+  background: #fffbeb;
+  border-left: 4px solid #f59e0b;
+  padding: 1rem 1.5rem;
+  border-radius: 4px 8px 8px 4px;
+  margin-bottom: 1rem;
+}
+
+.announcementCard h3 {
+  font-size: 1.2rem;
+  color: #92400e;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.announcementMeta {
+  font-size: 0.85rem;
+  color: #b45309;
+  margin-bottom: 0.5rem;
+}
+
+.announcementBody {
+  color: #334155;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.noAnnouncements {
+  text-align: center;
+  color: #64748b;
+  padding: 2rem;
+  font-style: italic;
+}
+
+.createBox {
+  margin-bottom: 2rem;
+  background: white;
+  padding: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  border: 1px solid #e2e8f0;
+}
+
+.createInput, .createTextarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+.createTextarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.submitBtn {
+  background: #b45309;
+  color: white;
+  border: none;
+  padding: 0.5rem 1.5rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.submitBtn:hover {
+  background: #92400e;
+}
+
+.submitBtn:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .main { padding: 1rem; }
+}
