@@ -35,6 +35,12 @@ export default function ProtectedRoute({ children, allowedRoles }: { children: R
       return;
     }
 
+    // If Admin/Super Admin tries to access /dashboard, redirect them to /admin
+    if ((userProfile.role === "ADMIN" || userProfile.role === "SUPER_ADMIN") && pathname === "/dashboard") {
+      router.push("/admin");
+      return;
+    }
+
     // Role-based protection
     if (allowedRoles && !allowedRoles.includes(userProfile.role)) {
       router.push("/dashboard");
@@ -63,7 +69,7 @@ export default function ProtectedRoute({ children, allowedRoles }: { children: R
   if (user && !userProfile && pathname !== "/onboarding") {
     return <div className="min-h-screen flex items-center justify-center">Setting up profile...</div>;
   }
-  if (user && userProfile && !userProfile.isApproved && pathname !== "/pending") {
+  if (user && userProfile && !userProfile.isApproved && userProfile.role === "PENDING" && pathname !== "/pending") {
     return <div className="min-h-screen flex items-center justify-center">Checking approval status...</div>;
   }
 

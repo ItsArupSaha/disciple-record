@@ -4,169 +4,74 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "../context/AuthContext";
 import ProtectedRoute from "../components/ProtectedRoute";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "../lib/firebase/client";
-import { submitOnboarding } from "../actions/userActions";
-import styles from "./page.module.css";
+import ClaimProfile from "./components/ClaimProfile";
+import RegisterForm from "./components/RegisterForm";
+import { UserCheck, UserPlus, LogOut } from "lucide-react";
 
 export default function OnboardingPage() {
-  const { user, refreshProfile } = useAuth();
+  const { refreshProfile, signOut } = useAuth();
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState<"claim" | "register">("claim");
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!user) return;
-    
-    setLoading(true);
-    setError("");
-
-    const formData = new FormData(e.currentTarget);
-    const photoFile = formData.get("profilePhoto") as File;
-    let profileImageURL = "";
-
-    // Upload photo if present
-    if (photoFile && photoFile.size > 0) {
-      try {
-        const fileRef = ref(storage, `profile_photos/${user.uid}`);
-        const uploadResult = await uploadBytes(fileRef, photoFile);
-        profileImageURL = await getDownloadURL(uploadResult.ref);
-      } catch (err) {
-        console.error("Photo upload failed", err);
-        setError("ছবি আপলোড ব্যর্থ হয়েছে। (Photo upload failed)");
-        setLoading(false);
-        return;
-      }
-    }
-
-    const data = {
-      name: formData.get("name") as string,
-      initiatedName: formData.get("initiatedName") as string,
-      address: {
-        division: formData.get("division") as string,
-        district: formData.get("district") as string,
-        thana: formData.get("thana") as string,
-      },
-      mobileNumber: formData.get("mobileNumber") as string,
-      whatsappNumber: formData.get("whatsappNumber") as string,
-      bloodGroup: formData.get("bloodGroup") as string,
-      joinedIskconDate: formData.get("joinedIskconDate") as string,
-      initiatedYear: formData.get("initiatedYear") as string,
-      spiritualMaster: formData.get("spiritualMaster") as string,
-      profileImageURL,
-    };
-
-    // basic validation for english digits
-    if (!/^[0-9+]*$/.test(data.mobileNumber)) {
-      setError("মোবাইল নম্বর শুধুমাত্র ইংরেজিতে (English digits) দিতে হবে।");
-      setLoading(false);
-      return;
-    }
-
-    const result = await submitOnboarding(data, user.uid, user.email);
-    if (result && result.success) {
-      // Force refresh the context so it sees the new userProfile
-      await refreshProfile();
-      // Router redirection is handled via ProtectedRoute or effects in AuthContext
-    } else {
-      setError("তথ্য সংরক্ষণে সমস্যা হয়েছে। দয়া করে আবার চেষ্টা করুন। (Failed to save data)");
-      setLoading(false);
-    }
+  const handleSuccess = async () => {
+    await refreshProfile();
   };
 
   return (
     <ProtectedRoute>
-      <div className={styles.container}>
-        <div className={styles.formCard}>
-          <h1 className={styles.title}>আপনার তথ্য দিন</h1>
-          <p className={styles.subtitle}>Please provide your information</p>
+      <div className="min-h-screen bg-slate-100 py-4 sm:py-8 px-4 sm:px-6 lg:px-8 flex flex-col justify-center items-center font-sans">
+        <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden transition-all duration-300">
           
-          {error && <div className={styles.error} style={{marginBottom: '1rem', textAlign: 'center'}}>{error}</div>}
-
-          <form onSubmit={handleSubmit}>
-            <div className={styles.fieldGroup}>
-              <label className={styles.label}>নাম (Name) *</label>
-              <input type="text" name="name" required className={styles.input} />
-            </div>
-
-            <div className={styles.fieldGroup}>
-              <label className={styles.label}>প্রোফাইল ছবি (Profile Photo)</label>
-              <input type="file" name="profilePhoto" accept="image/*" className={styles.input} style={{padding: '0.4rem'}} />
-            </div>
-
-            <div className={styles.fieldGroup}>
-              <label className={styles.label}>দীক্ষাপ্রাপ্ত নাম (Initiated Name) *</label>
-              <input type="text" name="initiatedName" required className={styles.input} 
-                placeholder="Ex: Ananda Svarupa Nitai Das" />
-            </div>
-
-            <h3 style={{marginTop: '2rem', marginBottom: '1rem', color: '#334155', fontWeight: 600}}>ঠিকানা (Address)</h3>
-            <div className={styles.fieldRow}>
-              <div>
-                <label className={styles.label}>বিভাগ (Division) *</label>
-                <input type="text" name="division" required className={styles.input} />
-              </div>
-              <div>
-                <label className={styles.label}>জেলা (District) *</label>
-                <input type="text" name="district" required className={styles.input} />
-              </div>
-            </div>
-            
-            <div className={styles.fieldGroup}>
-              <label className={styles.label}>থানা / এলাকা (Thana) *</label>
-              <input type="text" name="thana" required className={styles.input} />
-            </div>
-
-            <h3 style={{marginTop: '2rem', marginBottom: '1rem', color: '#334155', fontWeight: 600}}>যোগাযোগ (Contact)</h3>
-            <div className={styles.fieldRow}>
-              <div>
-                <label className={styles.label}>মোবাইল নম্বর (Mobile Number) - English Only *</label>
-                <input type="tel" name="mobileNumber" required pattern="[0-9+]*" className={styles.input} placeholder="017..." />
-              </div>
-              <div>
-                <label className={styles.label}>হোয়াটসঅ্যাপ (WhatsApp) - Optional</label>
-                <input type="tel" name="whatsappNumber" pattern="[0-9+]*" className={styles.input} placeholder="017..." />
-              </div>
-            </div>
-
-            <h3 style={{marginTop: '2rem', marginBottom: '1rem', color: '#334155', fontWeight: 600}}>দীক্ষা সম্পর্কিত তথ্য (Initiation Info)</h3>
-            <div className={styles.fieldRow}>
-              <div>
-                <label className={styles.label}>ইসকনে যোগদানের সাল (Joined ISKCON Year) *</label>
-                <input type="text" name="joinedIskconDate" required className={styles.input} />
-              </div>
-              <div>
-                <label className={styles.label}>দীক্ষাপ্রাপ্ত সাল (Initiated Year) *</label>
-                <input type="text" name="initiatedYear" required className={styles.input} />
-              </div>
-            </div>
-
-            <div className={styles.fieldRow}>
-              <div>
-                <label className={styles.label}>দীক্ষাগুরু (Spiritual Master) *</label>
-                <input type="text" name="spiritualMaster" required className={styles.input} defaultValue="HH Jayapataka Swami" />
-              </div>
-              <div>
-                <label className={styles.label}>রক্তের গ্রুপ (Blood Group) *</label>
-                <select name="bloodGroup" required className={styles.input}>
-                  <option value="">Select...</option>
-                  <option value="A+">A+</option>
-                  <option value="A-">A-</option>
-                  <option value="B+">B+</option>
-                  <option value="B-">B-</option>
-                  <option value="O+">O+</option>
-                  <option value="O-">O-</option>
-                  <option value="AB+">AB+</option>
-                  <option value="AB-">AB-</option>
-                </select>
-              </div>
-            </div>
-
-            <button type="submit" disabled={loading} className={styles.submitBtn}>
-              {loading ? "সংরক্ষণ করা হচ্ছে..." : "জমা দিন (Submit)"}
+          {/* Header Banner */}
+          <div className="bg-gradient-to-r from-amber-600 to-orange-500 pt-14 pb-5 px-4 sm:p-6 md:p-8 text-center text-white relative shadow-inner">
+            <button
+              onClick={async () => {
+                await signOut();
+                router.push("/");
+              }}
+              className="absolute top-3 right-3 sm:top-4 sm:right-4 flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-xs font-semibold transition cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              লগ আউট (Log out)
             </button>
-          </form>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-extrabold tracking-tight">দীক্ষাপ্রাপ্ত ভক্ত তথ্য আর্কাইভ</h1>
+            <p className="mt-1 text-amber-100 text-xs sm:text-sm md:text-lg">Initiated Disciple Information Archive - ISKCON Sylhet</p>
+          </div>
+
+          {/* Tab Navigation */}
+          <div className="flex border-b border-slate-200 bg-slate-50">
+            <button
+              onClick={() => setActiveTab("claim")}
+              className={`flex-1 py-2.5 px-4 font-semibold text-center border-b-2 flex items-center justify-center gap-2 transition duration-200 text-sm sm:text-base ${
+                activeTab === "claim" 
+                  ? "border-amber-600 text-amber-700 bg-white shadow-sm" 
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <UserCheck className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
+              পূর্বের রেকর্ড দাবি করুন (Claim Profile)
+            </button>
+            <button
+              onClick={() => setActiveTab("register")}
+              className={`flex-1 py-2.5 px-4 font-semibold text-center border-b-2 flex items-center justify-center gap-2 transition duration-200 text-sm sm:text-base ${
+                activeTab === "register" 
+                  ? "border-amber-600 text-amber-700 bg-white shadow-sm" 
+                  : "border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+              }`}
+            >
+              <UserPlus className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600" />
+              নতুন নিবন্ধন (Register New)
+            </button>
+          </div>
+
+          {/* Tab Content */}
+          <div className="p-5 sm:p-6 md:p-8">
+            {activeTab === "claim" ? (
+              <ClaimProfile onSuccess={handleSuccess} />
+            ) : (
+              <RegisterForm onSuccess={handleSuccess} />
+            )}
+          </div>
         </div>
       </div>
     </ProtectedRoute>

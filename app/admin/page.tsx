@@ -1,42 +1,46 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import * as XLSX from "xlsx";
-import jsPDF from "jspdf";
-import "jspdf-autotable";
-
+import { useEffect, useState } from "react";
 import ProtectedRoute from "../components/ProtectedRoute";
 import Navbar from "../components/Navbar";
 import { useAuth, UserProfile } from "../context/AuthContext";
-import { getAllUsers, approveUser, deleteUser, findMatchingRecord, mergeUser, importDisciplesAction, updateUserAction } from "../actions/adminActions";
-import { normalizeNumbers } from "../lib/utils";
-import styles from "./page.module.css";
+import { 
+  getAllUsers, 
+  approveUser, 
+  deleteUser, 
+  findMatchingRecord, 
+  mergeUser, 
+  updateUserAction 
+} from "../actions/adminActions";
 
-interface jsPDFWithAutoTable extends jsPDF {
-  autoTable: (options: any) => void;
-}
+// Modular Subcomponents
+import StatsCards from "./components/StatsCards";
+import ApprovedList from "./components/ApprovedList";
+import PendingList from "./components/PendingList";
+import DetailsModal from "./components/DetailsModal";
+import EditModal from "./components/EditModal";
+import MatchModal from "./components/MatchModal";
+import PasswordModal from "./components/PasswordModal";
 
 export default function AdminPage() {
   const { userProfile } = useAuth();
+  
+  // Data States
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"pending" | "approved" | "import">("pending");
+  const [activeTab, setActiveTab] = useState<"approved" | "pending">("approved");
 
-  const [searchYear, setSearchYear] = useState("");
-  const [searchDistrict, setSearchDistrict] = useState("");
+  // Modal Control States
+  const [selectedUserForDetails, setSelectedUserForDetails] = useState<UserProfile | null>(null);
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<UserProfile | null>(null);
+  const [selectedUserForDeleteId, setSelectedUserForDeleteId] = useState<string | null>(null);
   
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
-  const [passwordInput, setPasswordInput] = useState("");
-  const [targetActionId, setTargetActionId] = useState<string | null>(null);
-
-  // Edit states
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
-
-  // Matching states
-  const [matchingUsers, setMatchingUsers] = useState<any[]>([]);
-  const [showMatchModal, setShowMatchModal] = useState(false);
+  // Merge Matching States
   const [selectedPendingUser, setSelectedPendingUser] = useState<UserProfile | null>(null);
+  const [matchingOfflineCandidates, setMatchingOfflineCandidates] = useState<any[]>([]);
+
+  const isSuperAdmin = userProfile?.role === "SUPER_ADMIN";
+  const applyAntiCopy = !isSuperAdmin;
 
   const loadUsers = async () => {
     setLoading(true);
@@ -53,437 +57,240 @@ export default function AdminPage() {
     loadUsers();
   }, [userProfile]);
 
-  const handleApprove = async (uid: string) => {
+  // Approval Process (with Merge Checks)
+  const handleApproveClick = async (pendingUser: UserProfile) => {
     if (!userProfile?.email) return;
-    if (confirm("Are you sure you want to approve this user directly?")) {
+
+    if (!pendingUser.initiatedName) {
+      // If no initiated name is present, approve directly
+      await executeDirectApproval(pendingUser.uid);
+      return;
+    }
+
+    setLoading(true);
+    const res = await findMatchingRecord(pendingUser.initiatedName, userProfile.email);
+    setLoading(false);
+
+    if (res.success && res.data) {
+      // Find candidate offline profiles (profiles imported via Excel that do not have a uid or email linked yet)
+      const offlineCandidates = (res.data as any[]).filter(
+        (candidate) => candidate.id !== pendingUser.uid && (!candidate.email || candidate.email === "")
+      );
+
+      if (offlineCandidates.length > 0) {
+        setMatchingOfflineCandidates(offlineCandidates);
+        setSelectedPendingUser(pendingUser);
+      } else {
+        await executeDirectApproval(pendingUser.uid);
+      }
+    } else {
+      await executeDirectApproval(pendingUser.uid);
+    }
+  };
+
+  const executeDirectApproval = async (uid: string) => {
+    if (!userProfile?.email) return;
+    if (confirm("আপনি কি মার্জ না করেই এই শিষ্যকে সরাসরি অনুমোদন করতে চান? (Confirm direct approval?)")) {
+      setLoading(true);
       const res = await approveUser(uid, userProfile.email);
+      setLoading(false);
       if (res.success) {
-        alert("User approved!");
+        alert("শিষ্য সফলভাবে অনুমোদিত হয়েছে! (User approved!)");
         loadUsers();
       } else {
-        alert(res.error || "Approval failed");
+        alert(res.error || "অনুমোদন ব্যর্থ হয়েছে। (Approval failed)");
       }
     }
   };
 
-  const handleFindMatches = async (user: UserProfile) => {
-    if (!userProfile?.email || !user.initiatedName) return;
-    const res = await findMatchingRecord(user.initiatedName, userProfile.email);
-    if (res.success && res.data) {
-      // Filter out self and only show OFFLINE records (those that might not have a uid or email yet)
-      const offlineCandidates = (res.data as any[]).filter(d => d.id !== user.uid && (!d.email || d.email === ""));
-      if (offlineCandidates.length > 0) {
-        setMatchingUsers(offlineCandidates);
-        setSelectedPendingUser(user);
-        setShowMatchModal(true);
-      } else {
-        alert("No matching offline records found for this Initiated Name.");
-        handleApprove(user.uid);
-      }
-    }
-  };
-
-  const handleMerge = async (offlineId: string, keepMobile: boolean) => {
+  // Merge & Approve Action
+  const handleMergeSubmit = async (offlineId: string, keepOfflineMobile: boolean) => {
     if (!userProfile?.email || !selectedPendingUser) return;
-    const res = await mergeUser(selectedPendingUser.uid, offlineId, userProfile.email, keepMobile);
-    if (res.success) {
-      alert("Records merged & user approved successfully!");
-      setShowMatchModal(false);
-      loadUsers();
-    } else {
-      alert(res.error || "Merge failed");
-    }
-  };
-
-  const initiateDelete = (uid: string) => {
-    if (userProfile?.role !== "SUPER_ADMIN") return;
-    setTargetActionId(uid);
-    setShowPasswordModal(true);
-  };
-
-  const initiateEdit = (user: UserProfile) => {
-    if (userProfile?.role !== "SUPER_ADMIN") return;
-    setEditingUser(user);
-    setShowEditModal(true);
-  };
-
-  const handleEditSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!userProfile?.email || !editingUser) return;
-
-    const formData = new FormData(e.currentTarget);
-    const updatedData = {
-      name: formData.get("name") as string,
-      initiatedName: formData.get("initiatedName") as string,
-      mobileNumber: formData.get("mobileNumber") as string,
-      whatsappNumber: formData.get("whatsappNumber") as string,
-      bloodGroup: formData.get("bloodGroup") as string,
-      joinedIskconDate: formData.get("joinedIskconDate") as string,
-      initiatedYear: formData.get("initiatedYear") as string,
-      address: {
-        division: formData.get("division") as string,
-        district: formData.get("district") as string,
-        thana: formData.get("thana") as string,
-      }
-    };
-
-    const password = prompt("Please enter Super Admin password to confirm changes:");
-    if (!password) return;
-
-    setLoading(true);
-    const res = await updateUserAction(editingUser.uid, updatedData, password, userProfile.email);
-    if (res.success) {
-      alert("User updated successfully!");
-      setShowEditModal(false);
-      loadUsers();
-    } else {
-      alert(res.error || "Update failed");
-    }
-    setLoading(false);
-  };
-
-  const executeDelete = async () => {
-    if (!userProfile?.email || !targetActionId) return;
-    const res = await deleteUser(targetActionId, passwordInput, userProfile.email);
-    if (res.success) {
-      setShowPasswordModal(false);
-      setPasswordInput("");
-      loadUsers();
-    } else {
-      alert(res.error || "Deletion failed. Incorrect Password?");
-    }
-  };
-
-  const isSuperAdmin = userProfile?.role === "SUPER_ADMIN";
-  const applyAntiCopy = !isSuperAdmin;
-
-  const pendingUsers = users.filter(u => u.role === "PENDING" && !u.isApproved);
-  let approvedUsers = users.filter(u => u.isApproved);
-
-  if (searchYear) {
-    const normalizedSearch = normalizeNumbers(searchYear);
-    approvedUsers = approvedUsers.filter(u => 
-      normalizeNumbers(u.initiatedYear).includes(normalizedSearch)
-    );
-  }
-  if (searchDistrict) {
-    approvedUsers = approvedUsers.filter(u => u.address?.district?.toLowerCase().includes(searchDistrict.toLowerCase()));
-  }
-
-  const exportToExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(approvedUsers.map(u => ({
-      Name: u.name,
-      "Initiated Name": u.initiatedName,
-      "Mobile Number": u.mobileNumber,
-      "WhatsApp Number": u.whatsappNumber,
-      "Blood Group": u.bloodGroup,
-      "Spiritual Master": u.spiritualMaster,
-      "Joined ISKCON Year": u.joinedIskconDate,
-      "Initiated Year": u.initiatedYear,
-      District: u.address?.district,
-      Thana: u.address?.thana,
-      Division: u.address?.division,
-    })));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Disciple List");
-    XLSX.writeFile(wb, "DiscipleList.xlsx");
-  };
-
-  const exportToPDF = () => {
-    const doc = new jsPDF() as jsPDFWithAutoTable;
-    doc.text("Approved Disciples List", 14, 15);
-    const tableColumn = ["Name", "Initiated Name", "Mobile", "District", "Initiated Year"];
-    const tableRows: any[] = [];
-    approvedUsers.forEach(u => {
-      tableRows.push([u.name || "", u.initiatedName || "", u.mobileNumber || "", u.address?.district || "", u.initiatedYear || ""]);
-    });
-    doc.autoTable({ head: [tableColumn], body: tableRows, startY: 20 });
-    doc.save("DiscipleList.pdf");
-  };
-
-  const downloadSampleExcel = () => {
-    const headers = [
-      "Name", "Initiated Name", "Mobile Number", "WhatsApp Number", 
-      "Blood Group", "Joined ISKCON Date", "Initiated Year", "Spiritual Master", 
-      "Division", "District", "Thana"
-    ];
-    const ws = XLSX.utils.aoa_to_sheet([headers, [
-      "Ananda Kumar", "Ananda Svarupa Nitai Das", "017XXXXXXXX", "017XXXXXXXX", 
-      "O+", "2015", "2018", "HH Jayapataka Swami", 
-      "Sylhet", "Sylhet", "Kotwali"
-    ]]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Sample");
-    XLSX.writeFile(wb, "Import_Template.xlsx");
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !userProfile?.email) return;
     
     setLoading(true);
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: "binary" });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
-        
-        if (data.length > 0) {
-          const res = await importDisciplesAction(data, userProfile.email!);
-          if (res.success) {
-            alert(`Successfully imported ${data.length} disciples!`);
-            loadUsers();
-          } else {
-            alert(res.error || "Import failed");
-          }
-        }
-      } catch (err) {
-        console.error("File processing error", err);
-        alert("Failed to process file. Make sure it is a valid Excel/CSV.");
-      }
-      setLoading(false);
-    };
-    reader.readAsBinaryString(file);
+    const res = await mergeUser(selectedPendingUser.uid, offlineId, userProfile.email, keepOfflineMobile);
+    setLoading(false);
+
+    if (res.success) {
+      alert("রেকর্ড সফলভাবে মার্জ এবং অনুমোদিত হয়েছে! (Merged & approved successfully!)");
+      setSelectedPendingUser(null);
+      setMatchingOfflineCandidates([]);
+      loadUsers();
+    } else {
+      alert(res.error || "মার্জ করতে ব্যর্থ হয়েছে। (Merge failed)");
+    }
   };
+
+  // Delete Action
+  const handleDeleteClick = (uid: string) => {
+    if (!isSuperAdmin) {
+      alert("শুধুমাত্র সুপার এডমিন এই কাজটি করতে পারেন। (Super Admin action only)");
+      return;
+    }
+    setSelectedUserForDeleteId(uid);
+  };
+
+  const executeDelete = async (passwordInput: string) => {
+    if (!userProfile?.email || !selectedUserForDeleteId) return;
+
+    const res = await deleteUser(selectedUserForDeleteId, passwordInput, userProfile.email);
+    if (res.success) {
+      alert("রেকর্ডটি সফলভাবে মুছে ফেলা হয়েছে।");
+      setSelectedUserForDeleteId(null);
+      loadUsers();
+    } else {
+      throw new Error(res.error || "ডিলেট ব্যর্থ হয়েছে। পাসওয়ার্ডটি পুনরায় পরীক্ষা করুন।");
+    }
+  };
+
+  // Edit Action
+  const handleEditSave = async (updatedData: any, passwordInput: string): Promise<boolean> => {
+    if (!userProfile?.email || !selectedUserForEdit) return false;
+
+    const res = await updateUserAction(selectedUserForEdit.uid, updatedData, passwordInput, userProfile.email);
+    if (res.success) {
+      alert("তথ্য সফলভাবে হালনাগাদ করা হয়েছে! (Updated successfully!)");
+      loadUsers();
+      return true;
+    }
+    return false;
+  };
+
+  // Separate Users
+  const pendingUsers = users.filter((u) => u.role === "PENDING" && !u.isApproved);
+  const approvedUsers = users.filter((u) => u.isApproved && u.role === "USER");
 
   return (
     <ProtectedRoute allowedRoles={["ADMIN", "SUPER_ADMIN"]}>
-      <div className={`${styles.container} ${applyAntiCopy ? styles.preventCopy : ""}`} 
-           onContextMenu={e => { if(applyAntiCopy) e.preventDefault(); }}
-           onDragStart={e => { if(applyAntiCopy) e.preventDefault(); }}>
+      <div 
+        className={`min-h-screen bg-slate-100 font-sans ${applyAntiCopy ? "select-none" : ""}`}
+        onContextMenu={e => { if(applyAntiCopy) e.preventDefault(); }}
+        onDragStart={e => { if(applyAntiCopy) e.preventDefault(); }}
+      >
         <Navbar />
-        
-        <main className={styles.main}>
-          <div className={styles.tabs}>
-            <button className={`${styles.tabBtn} ${activeTab === "pending" ? styles.tabBtnActive : ""}`} onClick={() => setActiveTab("pending")}>
-              Pending Approvals ({pendingUsers.length})
-            </button>
-            <button className={`${styles.tabBtn} ${activeTab === "approved" ? styles.tabBtnActive : ""}`} onClick={() => setActiveTab("approved")}>
-              Approved Users ({approvedUsers.length})
-            </button>
-            {isSuperAdmin && (
-              <button className={`${styles.tabBtn} ${activeTab === "import" ? styles.tabBtnActive : ""}`} onClick={() => setActiveTab("import")}>
-                Data Import
-              </button>
-            )}
-          </div>
 
-          {loading ? (
-             <p>লোড হচ্ছে... (Loading data...)</p>
-          ) : (
-            <>
-              {activeTab === "pending" && (
-                <div className={styles.card}>
-                  <h2 className={styles.cardTitle}>অপেক্ষমান অনুমোদন (Pending Approvals)</h2>
-                  {pendingUsers.length === 0 ? <p>কোনো অপেক্ষমান ব্যবহারকারী নেই। (No pending users.)</p> : (
-                    <div className={styles.tableContainer}>
-                      <table className={styles.table}>
-                        <thead>
-                          <tr>
-                            <th>Name</th>
-                            <th>Initiated Name</th>
-                            <th>Mobile</th>
-                            <th>Spiritual Master</th>
-                            <th>Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pendingUsers.map(u => (
-                            <tr key={u.uid}>
-                              <td>{u.name}</td>
-                              <td>{u.initiatedName}</td>
-                              <td>{u.mobileNumber}</td>
-                              <td>{u.spiritualMaster}</td>
-                              <td>
-                                <button className={`${styles.actionBtn} ${styles.approveBtn}`} onClick={() => handleFindMatches(u)}>Merge & Approve</button>
-                                {isSuperAdmin && <button className={`${styles.actionBtn} ${styles.deleteBtn}`} onClick={() => initiateDelete(u.uid)}>Delete</button>}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {activeTab === "approved" && (
-                <div className={styles.card}>
-                  <div className={styles.toolbar}>
-                    <h2 className={styles.cardTitle}>অনুমোদিত ভক্তগণ (Approved Disciples)</h2>
-                    <div>
-                      <button className={styles.exportBtn} onClick={exportToExcel} style={{marginRight: '1rem'}}>Export Excel</button>
-                      <button className={styles.exportBtn} onClick={exportToPDF} style={{background: '#dc2626'}}>Export PDF</button>
-                    </div>
-                  </div>
-
-                  <div className={styles.filters}>
-                    <input type="text" placeholder="Filter by Year..." className={styles.filterSelect} value={searchYear} onChange={e => setSearchYear(e.target.value)} />
-                    <input type="text" placeholder="Filter by District..." className={styles.filterSelect} value={searchDistrict} onChange={e => setSearchDistrict(e.target.value)} />
-                  </div>
-                  
-                  <div className={styles.tableContainer}>
-                    <table className={styles.table}>
-                      <thead>
-                        <tr>
-                          <th>Photo</th>
-                          <th>Name</th>
-                          <th>Initiated Name</th>
-                          <th>District</th>
-                          <th>Initiated Year</th>
-                          {isSuperAdmin && <th style={{width: '150px'}}>Actions</th>}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {approvedUsers.map(u => (
-                          <tr key={u.uid}>
-                            <td style={{width: '60px'}}>
-                              {u.profileImageURL ? (
-                                <img 
-                                  src={u.profileImageURL} 
-                                  alt={u.name} 
-                                  className={styles.profileThumb} 
-                                  style={{pointerEvents: applyAntiCopy ? 'none' : 'auto'}} 
-                                />
-                              ) : (
-                                <div className={styles.noThumb}>N/A</div>
-                              )}
-                            </td>
-                            <td>{u.name}</td>
-                            <td>{u.initiatedName}</td>
-                            <td>{u.address?.district}</td>
-                            <td>{u.initiatedYear}</td>
-                            {isSuperAdmin && (
-                              <td>
-                                <button className={`${styles.actionBtn} ${styles.approveBtn}`} style={{background: '#2563eb', marginBottom: '4px'}} onClick={() => initiateEdit(u)}>Edit</button>
-                                <button className={`${styles.actionBtn} ${styles.deleteBtn}`} onClick={() => initiateDelete(u.uid)}>Delete</button>
-                              </td>
-                            )}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {activeTab === "import" && isSuperAdmin && (
-                <div className={styles.card}>
-                  <h2 className={styles.cardTitle}>Data Import</h2>
-                  <p>In case you want to batch import offline records securely.</p>
-                  
-                  <div style={{marginTop: '1.5rem', display: 'flex', gap: '1rem', alignItems: 'center'}}>
-                    <button onClick={downloadSampleExcel} className={styles.exportBtn} style={{background: '#10b981'}}>
-                      Download Sample Excel
-                    </button>
-                    <span>OR</span>
-                    <input type="file" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" onChange={handleFileUpload} />
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </main>
-
-        {/* Modal for Super Admin Password */}
-        {showPasswordModal && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modal}>
-              <h3 className={styles.modalTitle}>Super Admin Action Required</h3>
-              <p style={{marginBottom: '1rem', color: '#64748b'}}>Please enter the system password to confirm deletion.</p>
-              <input type="password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} className={styles.modalInput} placeholder="Enter password..." />
-              <div className={styles.modalActions}>
-                <button className={styles.modalBtn} onClick={() => setShowPasswordModal(false)}>Cancel</button>
-                <button className={`${styles.modalBtn} ${styles.deleteBtn}`} onClick={executeDelete}>Confirm Delete</button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modal for Matching Search */}
-        {showMatchModal && selectedPendingUser && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modal} style={{maxWidth: '500px'}}>
-              <h3 className={styles.modalTitle}>Match Found! (মিল পাওয়া গেছে)</h3>
-              <p style={{marginBottom: '1rem', color: '#64748b'}}>
-                We found offline records matching <b>{selectedPendingUser.initiatedName}</b>. Do you want to merge this new login request with an existing offline record?
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+          
+          {/* Header */}
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-5">
+            <div>
+              <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">
+                {isSuperAdmin ? "সুপার এডমিন ড্যাশবোর্ড (Super Admin)" : "এডমিন ড্যাশবোর্ড (Admin Dashboard)"}
+              </h1>
+              <p className="text-slate-500 text-sm mt-1">
+                দীক্ষাপ্রাপ্ত শিষ্যদের তথ্য পরিচালনা এবং অনুমোদন প্যানেল
               </p>
-              {matchingUsers.map((m) => (
-                <div key={m.id} style={{padding: '1rem', border: '1px solid #e2e8f0', borderRadius: '8px', marginBottom: '1rem'}}>
-                  <p><b>Name:</b> {m.name}</p>
-                  <p><b>Mobile:</b> {m.mobileNumber}</p>
-                  <div style={{marginTop: '1rem', display: 'flex', gap: '0.5rem'}}>
-                    <button className={`${styles.modalBtn} ${styles.approveBtn}`} style={{fontSize: '0.8rem'}} onClick={() => handleMerge(m.id, true)}>Merge (Keep Offline Mobile)</button>
-                    <button className={`${styles.modalBtn} ${styles.approveBtn}`} style={{fontSize: '0.8rem', background: '#2563eb'}} onClick={() => handleMerge(m.id, false)}>Merge (Keep New Mobile)</button>
-                  </div>
-                </div>
-              ))}
-              <div className={styles.modalActions} style={{marginTop: '1.5rem'}}>
-                <button className={styles.modalBtn} onClick={() => { setShowMatchModal(false); setMatchingUsers([]); }}>Cancel</button>
-                <button className={`${styles.modalBtn} ${styles.deleteBtn}`} onClick={() => { handleApprove(selectedPendingUser.uid); setShowMatchModal(false); }}>Approve as NEW Record</button>
-              </div>
             </div>
           </div>
+
+          {/* Stats Summary */}
+          {loading && users.length === 0 ? (
+            <div className="h-32 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-slate-500 font-semibold animate-pulse">
+              পরিসংখ্যান লোড হচ্ছে... (Loading stats...)
+            </div>
+          ) : (
+            <StatsCards users={users} />
+          )}
+
+          {/* Tabs Navigation */}
+          <div className="flex border-b border-slate-200 bg-white p-1.5 rounded-xl border max-w-md shadow-xs">
+            <button
+              onClick={() => setActiveTab("approved")}
+              className={`flex-1 py-2 px-4 rounded-lg font-bold text-center text-sm transition duration-200 ${
+                activeTab === "approved"
+                  ? "bg-amber-600 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              অনুমোদিত শিষ্য তালিকা ({approvedUsers.length})
+            </button>
+            <button
+              onClick={() => setActiveTab("pending")}
+              className={`flex-1 py-2 px-4 rounded-lg font-bold text-center text-sm transition duration-200 ${
+                activeTab === "pending"
+                  ? "bg-amber-600 text-white shadow-sm"
+                  : "text-slate-500 hover:text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              অপেক্ষমান আবেদন ({pendingUsers.length})
+            </button>
+          </div>
+
+          {/* Main Content Area */}
+          {loading && users.length === 0 ? (
+            <div className="h-64 bg-white rounded-2xl border border-slate-200 flex items-center justify-center text-slate-500 font-semibold animate-pulse">
+              ডাটা লোড হচ্ছে... (Loading Disciple Archive...)
+            </div>
+          ) : (
+            <div>
+              {activeTab === "approved" ? (
+                <ApprovedList
+                  approvedUsers={approvedUsers}
+                  adminEmail={userProfile?.email || ""}
+                  isSuperAdmin={isSuperAdmin}
+                  onViewDetails={setSelectedUserForDetails}
+                  onEdit={setSelectedUserForEdit}
+                  onDelete={handleDeleteClick}
+                  onRefresh={loadUsers}
+                />
+              ) : (
+                <PendingList
+                  pendingUsers={pendingUsers}
+                  isSuperAdmin={isSuperAdmin}
+                  onViewDetails={setSelectedUserForDetails}
+                  onApprove={handleApproveClick}
+                  onDelete={handleDeleteClick}
+                />
+              )}
+            </div>
+          )}
+
+        </div>
+
+        {/* MODAL 1: View Details */}
+        {selectedUserForDetails && (
+          <DetailsModal
+            user={selectedUserForDetails}
+            onClose={() => setSelectedUserForDetails(null)}
+          />
         )}
 
-        {/* Modal for Editing User */}
-        {showEditModal && editingUser && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modal} style={{maxWidth: '600px', maxHeight: '90vh', overflowY: 'auto'}}>
-              <h3 className={styles.modalTitle}>Edit Disciple Information</h3>
-              <form onSubmit={handleEditSubmit}>
-                <div className={styles.editGrid}>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Name</label>
-                    <input type="text" name="name" defaultValue={editingUser.name} className={styles.modalInput} required />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Initiated Name</label>
-                    <input type="text" name="initiatedName" defaultValue={editingUser.initiatedName} className={styles.modalInput} required />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Mobile Number</label>
-                    <input type="text" name="mobileNumber" defaultValue={editingUser.mobileNumber} className={styles.modalInput} required />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>WhatsApp Number</label>
-                    <input type="text" name="whatsappNumber" defaultValue={editingUser.whatsappNumber} className={styles.modalInput} />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Blood Group</label>
-                    <input type="text" name="bloodGroup" defaultValue={editingUser.bloodGroup} className={styles.modalInput} />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Joined Year</label>
-                    <input type="text" name="joinedIskconDate" defaultValue={editingUser.joinedIskconDate} className={styles.modalInput} />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Initiated Year</label>
-                    <input type="text" name="initiatedYear" defaultValue={editingUser.initiatedYear} className={styles.modalInput} />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Division</label>
-                    <input type="text" name="division" defaultValue={editingUser.address?.division} className={styles.modalInput} />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>District</label>
-                    <input type="text" name="district" defaultValue={editingUser.address?.district} className={styles.modalInput} />
-                  </div>
-                  <div className={styles.fieldGroup}>
-                    <label className={styles.modalLabel}>Thana</label>
-                    <input type="text" name="thana" defaultValue={editingUser.address?.thana} className={styles.modalInput} />
-                  </div>
-                </div>
-                <div className={styles.modalActions} style={{marginTop: '1.5rem'}}>
-                  <button type="button" className={styles.modalBtn} onClick={() => setShowEditModal(false)}>Cancel</button>
-                  <button type="submit" className={`${styles.modalBtn} ${styles.approveBtn}`}>Save Changes</button>
-                </div>
-              </form>
-            </div>
-          </div>
+        {/* MODAL 2: Edit Disciple (Super Admin Only) */}
+        {selectedUserForEdit && (
+          <EditModal
+            user={selectedUserForEdit}
+            onClose={() => setSelectedUserForEdit(null)}
+            onSave={handleEditSave}
+          />
+        )}
+
+        {/* MODAL 3: Merge candidate modal */}
+        {selectedPendingUser && matchingOfflineCandidates.length > 0 && (
+          <MatchModal
+            pendingUser={selectedPendingUser}
+            matches={matchingOfflineCandidates}
+            onClose={() => {
+              setSelectedPendingUser(null);
+              setMatchingOfflineCandidates([]);
+            }}
+            onMerge={handleMergeSubmit}
+            onApproveAsNew={async () => {
+              const uid = selectedPendingUser.uid;
+              setSelectedPendingUser(null);
+              setMatchingOfflineCandidates([]);
+              await executeDirectApproval(uid);
+            }}
+          />
+        )}
+
+        {/* MODAL 4: Secure Action password prompt */}
+        {selectedUserForDeleteId && (
+          <PasswordModal
+            title="সতর্কতা: রেকর্ড মুছে ফেলা হচ্ছে (Delete Record Confirmation)"
+            description="আপনি কি নিশ্চিত যে আপনি শিষ্য রেকর্ডটি চিরতরে মুছে ফেলতে চান? এটি নিশ্চিত করতে সুপার এডমিন পাসওয়ার্ড প্রদান করুন।"
+            onClose={() => setSelectedUserForDeleteId(null)}
+            onConfirm={executeDelete}
+          />
         )}
 
       </div>

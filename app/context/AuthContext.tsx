@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useState, ReactNode } from "react
 import { User, onAuthStateChanged, signOut as fbSignOut } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase/client";
+import { checkAndCreateAdminUser } from "../actions/userActions";
 
 export interface UserProfile {
   uid: string;
@@ -24,6 +25,30 @@ export interface UserProfile {
   spiritualMaster?: string;
   isApproved: boolean;
   profileImageURL?: string;
+
+  // JSSS Excel Fields
+  serialNo?: string | number;
+  oldSerialNo?: string | number;
+  presentAddress?: string;
+  permanentAddress?: string;
+  dob?: string;
+  occupation?: string;
+  harinamInitiation?: string;
+  initiationPlace?: string;
+  brahmanInitiation?: string;
+  brahmanInitiationDate?: string;
+  brahmanInitiationPlace?: string;
+  department?: string;
+  service?: string;
+  counselorName?: string;
+  gender?: string;
+  maritalStatus?: string;
+  sadhanaGrantha?: string;
+  shelteredDate?: string;
+  namahattaName?: string;
+  isNamahattaConnected?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 interface AuthContextType {
@@ -50,7 +75,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchProfile = async (currentUser: User) => {
     try {
       const docRef = doc(db, "users", currentUser.uid);
-      const docSnap = await getDoc(docRef);
+      let docSnap = await getDoc(docRef);
+
+      if (!docSnap.exists()) {
+        const res = await checkAndCreateAdminUser(currentUser.uid, currentUser.email, currentUser.displayName);
+        if (res && res.success && res.role) {
+          docSnap = await getDoc(docRef);
+        }
+      }
 
       if (docSnap.exists()) {
         setUserProfile(docSnap.data() as UserProfile);
